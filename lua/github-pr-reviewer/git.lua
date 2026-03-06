@@ -151,89 +151,69 @@ function M.add_fork_remote(repo_owner, repo_url, callback)
   })
 end
 
+local function do_merge(cmd, callback)
+  local stderr_lines = {}
+  vim.fn.jobstart(cmd, {
+    stderr_buffered = true,
+    on_stderr = function(_, data)
+      if data then
+        for _, line in ipairs(data) do
+          if line and line ~= "" then
+            table.insert(stderr_lines, line)
+          end
+        end
+      end
+    end,
+    on_exit = function(_, code)
+      vim.schedule(function()
+        debug_log(string.format("Debug: Merge exit code = %d", code))
+        if code == 0 then
+          M._unstage_all(callback)
+        else
+          -- Check if it's a conflict situation
+          local status = vim.fn.system("git status --porcelain")
+          debug_log(string.format("Debug: Git status after merge: %s", status:sub(1, 200)))
+          local has_conflicts = status:match("UU ") or status:match("AA ") or status:match("DD ")
+
+          if has_conflicts then
+            M._unstage_all(function(unstage_ok, unstage_err)
+              if unstage_ok then
+                callback(true, nil, true)
+              else
+                callback(false, unstage_err or "Failed to unstage after conflict")
+              end
+            end)
+          else
+            local git_error = #stderr_lines > 0 and table.concat(stderr_lines, "\n") or "unknown error"
+            vim.fn.jobstart("git merge --abort", {
+              on_exit = function()
+                vim.schedule(function()
+                  callback(false, "Merge failed: " .. git_error)
+                end)
+              end,
+            })
+          end
+        end
+      end)
+    end,
+  })
+end
+
 function M.soft_merge(source_branch, head_repo_owner, head_repo_url, callback)
   -- If head_repo_owner is provided, setup fork remote
   if head_repo_owner and head_repo_url then
     M.add_fork_remote(head_repo_owner, head_repo_url, function(remote)
       local remote_source = remote .. "/" .. source_branch
       local cmd = string.format("git merge --no-commit --no-ff %s", remote_source)
-
       debug_log(string.format("Debug: Merging %s", remote_source))
-
-      vim.fn.jobstart(cmd, {
-        on_exit = function(_, code)
-          vim.schedule(function()
-            debug_log(string.format("Debug: Merge exit code = %d", code))
-            if code == 0 then
-              M._unstage_all(callback)
-            else
-              -- Check if it's a conflict situation
-              local status = vim.fn.system("git status --porcelain")
-              debug_log(string.format("Debug: Git status after merge: %s", status:sub(1, 200)))
-              local has_conflicts = status:match("UU ") or status:match("AA ") or status:match("DD ")
-
-              if has_conflicts then
-                -- Has conflicts, allow review with conflict markers
-                M._unstage_all(function(unstage_ok, unstage_err)
-                  if unstage_ok then
-                    callback(true, nil, true) -- true = has_conflicts
-                  else
-                    callback(false, unstage_err or "Failed to unstage after conflict")
-                  end
-                end)
-              else
-                -- Other merge error, abort
-                vim.fn.jobstart("git merge --abort", {
-                  on_exit = function()
-                    vim.schedule(function()
-                      callback(false, "Merge failed. Aborted.")
-                    end)
-                  end,
-                })
-              end
-            end
-          end)
-        end,
-      })
+      do_merge(cmd, callback)
     end)
   else
     -- Fallback to origin if no owner specified
     local remote_source = "origin/" .. source_branch
     local cmd = string.format("git merge --no-commit --no-ff %s", remote_source)
-
-    vim.fn.jobstart(cmd, {
-      on_exit = function(_, code)
-        vim.schedule(function()
-          if code == 0 then
-            M._unstage_all(callback)
-          else
-            -- Check if it's a conflict situation
-            local status = vim.fn.system("git status --porcelain")
-            local has_conflicts = status:match("UU ") or status:match("AA ") or status:match("DD ")
-
-            if has_conflicts then
-              -- Has conflicts, allow review with conflict markers
-              M._unstage_all(function(unstage_ok, unstage_err)
-                if unstage_ok then
-                  callback(true, nil, true) -- true = has_conflicts
-                else
-                  callback(false, unstage_err or "Failed to unstage after conflict")
-                end
-              end)
-            else
-              -- Other merge error, abort
-              vim.fn.jobstart("git merge --abort", {
-                on_exit = function()
-                  vim.schedule(function()
-                    callback(false, "Merge failed. Aborted.")
-                  end)
-                end,
-              })
-            end
-          end
-        end)
-      end,
-    })
+    debug_log(string.format("Debug: Merging %s", remote_source))
+    do_merge(cmd, callback)
   end
 end
 

@@ -5509,43 +5509,51 @@ function M.refresh_pr_branch()
                   return
                 end
 
-                -- Re-do the soft merge with the updated PR branch
-                git.soft_merge(head_branch, head_repo_owner, head_repo_url, function(merge_ok, merge_err, has_conflicts)
-                  if not merge_ok then
-                    vim.notify("❌ Failed to re-merge PR: " .. (merge_err or "unknown"), vim.log.levels.ERROR)
-                    return
-                  end
+                -- Remove untracked files left by the previous soft merge
+                -- (git reset --hard only resets tracked files, not new untracked ones)
+                vim.fn.jobstart("git clean -fd", {
+                  on_exit = function()
+                    vim.schedule(function()
+                      -- Re-do the soft merge with the updated PR branch
+                      git.soft_merge(head_branch, head_repo_owner, head_repo_url, function(merge_ok, merge_err, has_conflicts)
+                        if not merge_ok then
+                          vim.notify("❌ Failed to re-merge PR: " .. (merge_err or "unknown"), vim.log.levels.ERROR)
+                          return
+                        end
 
-                  if has_conflicts then
-                    vim.notify("⚠️  PR has merge conflicts after refresh.", vim.log.levels.WARN)
-                  end
+                        if has_conflicts then
+                          vim.notify("⚠️  PR has merge conflicts after refresh.", vim.log.levels.WARN)
+                        end
 
-                  -- Clear all cached data
-                  M._buffer_changes = {}
-                  M._buffer_hunks = {}
-                  M._buffer_comments = {}
-                  M._buffer_stats = {}
-                  M._buffer_jumped = {}
+                        -- Clear all cached data
+                        M._buffer_changes = {}
+                        M._buffer_hunks = {}
+                        M._buffer_comments = {}
+                        M._buffer_stats = {}
+                        M._buffer_jumped = {}
 
-                  -- Re-fetch modified files list
-                  git.get_modified_files_with_lines(function(files)
-                    vim.g.pr_review_modified_files = (files and #files > 0) and vim.tbl_map(function(f)
-                      return { path = f.path, status = f.status }
-                    end, files) or {}
+                        -- Re-fetch modified files list
+                        git.get_modified_files_with_lines(function(files)
+                          vim.g.pr_review_modified_files = (files and #files > 0) and vim.tbl_map(function(f)
+                            return { path = f.path, status = f.status }
+                          end, files) or {}
 
-                    -- Reload current buffer
-                    vim.cmd("edit!")
+                          -- Reload current buffer
+                          vim.cmd("edit!")
 
-                    -- Reload review buffer with updated file list
-                    if M._review_buffer and vim.api.nvim_buf_is_valid(M._review_buffer) then
-                      M._review_files = {}
-                      M._review_files_ordered = {}
-                      M.open_review_buffer()
-                    end
+                          -- Reload review buffer with updated file list
+                          if M._review_buffer and vim.api.nvim_buf_is_valid(M._review_buffer) then
+                            M._review_files = {}
+                            M._review_files_ordered = {}
+                            M.open_review_buffer()
+                          end
 
-                    vim.notify("✅ PR refreshed successfully!", vim.log.levels.INFO)
-                  end)
-                end)
+                          vim.notify("✅ PR refreshed successfully!", vim.log.levels.INFO)
+                        end)
+                      end)
+                    end)
+                  end,
+                })
               end)
             end,
           })
