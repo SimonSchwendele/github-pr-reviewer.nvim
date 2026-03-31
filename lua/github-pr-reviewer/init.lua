@@ -1494,14 +1494,35 @@ function M.toggle_review_buffer()
   end
 end
 
+-- Helper to invoke a saved mapping from vim.fn.maparg(key, "n", false, true)
+local function invoke_saved_mapping(saved)
+  if not saved or vim.tbl_isempty(saved) then
+    return false
+  end
+  if saved.callback then
+    saved.callback()
+  elseif saved.rhs and saved.rhs ~= "" then
+    local rhs = vim.api.nvim_replace_termcodes(saved.rhs, true, false, true)
+    vim.api.nvim_feedkeys(rhs, saved.noremap == 1 and "n" or "m", false)
+  else
+    return false
+  end
+  return true
+end
+
 -- Setup global navigation keymaps (work during review mode only)
 local function setup_global_review_keymaps()
+  -- Save original mappings before overriding them
+  local orig_next_file = vim.fn.maparg(M.config.next_file_key, "n", false, true)
+  local orig_prev_file = vim.fn.maparg(M.config.prev_file_key, "n", false, true)
+  local orig_toggle = vim.fn.maparg(M.config.review_buffer.toggle_key, "n", false, true)
+
   -- File navigation keymaps (global, but only work in review mode)
   vim.keymap.set("n", M.config.next_file_key, function()
     if vim.g.pr_review_number then
       M.next_file()
     else
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(M.config.next_file_key, true, false, true), "n", false)
+      invoke_saved_mapping(orig_next_file)
     end
   end, { desc = "Go to next file (PR review mode)" })
 
@@ -1509,7 +1530,7 @@ local function setup_global_review_keymaps()
     if vim.g.pr_review_number then
       M.prev_file()
     else
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(M.config.prev_file_key, true, false, true), "n", false)
+      invoke_saved_mapping(orig_prev_file)
     end
   end, { desc = "Go to previous file (PR review mode)" })
 
@@ -1518,8 +1539,7 @@ local function setup_global_review_keymaps()
     if vim.g.pr_review_number then
       M.toggle_review_buffer()
     else
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(M.config.review_buffer.toggle_key, true, false, true), "n",
-        false)
+      invoke_saved_mapping(orig_toggle)
     end
   end, { desc = "Toggle review buffer (PR review mode)" })
 end
